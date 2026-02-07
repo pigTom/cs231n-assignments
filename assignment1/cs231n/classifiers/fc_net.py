@@ -309,7 +309,7 @@ class FullyConnectedNet(object):
         input_nums = X.shape[0]
         current_input = X
         caches = []
-        for idx in range(1,self.num_layers+1):
+        for idx in range(1,self.num_layers):
             cache = {}
             W = self.params['W'+str(idx)]
             b = self.params['b'+str(idx)]
@@ -362,13 +362,13 @@ class FullyConnectedNet(object):
 
         loss, dout = softmax_loss(scores, y)
         # l2 regularization
-        for idx in range(1,self.num_layers+1):
+        for idx in range(1,self.num_layers):
             W = self.params['W'+str(idx)]
             loss += 0.5 * self.reg * np.sum(W**2)
           
-        for idx in range(self.num_layers, 0,-1):
+        for idx in range(self.num_layers-1, 0,-1):
 
-            cache = caches[idx]
+            cache = caches[idx-1]
             if idx != self.num_layers:
 
               # dropout backward
