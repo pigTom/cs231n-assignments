@@ -1,0 +1,21 @@
+**/__pycache__/
+*.pyc
+.DS_Store
+
+# Datasets (download via get_datasets.sh)
+**/datasets/cifar-10-batches-py/
+**/datasets/cifar-10-batches-mat/
+**/datasets/imagenet_val*.npz
+**/datasets/coco/
+
+# Saved models and checkpoints
+**/saved/*.npy
+**/pretrained_model/
+
+# Build artifacts
+**/build/
+**/*.so
+**/im2col_cython.c
+
+# Large media
+**/dino.gif
