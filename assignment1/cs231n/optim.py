@@ -209,8 +209,8 @@ def adam(w, dw, config=None):
     config['t'] = t
 
     m_hat = m / (1-np.power(beta1,t))
-    v_hat = m / (1-np.power(beta2,t))
-    next_w = w - m_hat / np.sqrt(v_hat + epsilon)
+    v_hat = v / (1-np.power(beta2,t))
+    next_w = w - learning_rate * m_hat / np.sqrt(v_hat + epsilon)
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
