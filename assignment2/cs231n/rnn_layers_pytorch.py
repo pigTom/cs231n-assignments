@@ -1,7 +1,7 @@
 """This file defines layer types that are commonly used for recurrent neural networks.
 """
 import torch
-
+import numpy as np
 
 def affine_forward(x, w, b):
     """Computes the forward pass for an affine (fully connected) layer.
@@ -43,7 +43,7 @@ def rnn_step_forward(x, prev_h, Wx, Wh, b):
     ##############################################################################
     # TODO: Implement a single forward step for the vanilla RNN.                 #
     ##############################################################################
-    # 
+    next_h = torch.nn.functional.tanh(prev_h @ Wh + x @ Wx+ b)
     ##############################################################################
     #                               END OF YOUR CODE                             #
     ##############################################################################
@@ -73,7 +73,13 @@ def rnn_forward(x, h0, Wx, Wh, b):
     # input data. You should use the rnn_step_forward function that you defined  #
     # above. You can use a for loop to help compute the forward pass.            #
     ##############################################################################
-    # 
+    h_list = []
+    prev_h = h0
+    for t in range(x.shape[1]):
+        next_h = rnn_step_forward(x[:, t, :], prev_h, Wx, Wh, b)
+        h_list.append(next_h)
+        prev_h = next_h
+    h = torch.stack(h_list, dim=1)
     ##############################################################################
     #                               END OF YOUR CODE                             #
     ##############################################################################
