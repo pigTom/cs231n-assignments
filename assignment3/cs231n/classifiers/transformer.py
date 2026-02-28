@@ -88,7 +88,26 @@ class CaptioningTransformer(nn.Module):
         #  3) Finally, apply the decoder features on the text & image embeddings   #
         #     along with the tgt_mask. Project the output to scores per token      #
         ############################################################################
+        # Step 1: Embed captions and add positional encoding
+        # captions: (N, T) -> embedding -> (N, T, W) -> positional_encoding -> (N, T, W)
+        tgt = self.embedding(captions)  # (N, T, W)
+        tgt = self.positional_encoding(tgt)  # (N, T, W)
 
+        # Step 2: Project image features to match embedding dimension
+        # features: (N, D) -> visual_projection -> (N, W) -> unsqueeze(1) -> (N, 1, W)
+        memory = self.visual_projection(features)  # (N, W)
+        memory = memory.unsqueeze(1)  # (N, 1, W) - add sequence dimension
+
+        # Step 3: Create causal mask (lower triangular matrix)
+        # This prevents positions from attending to future positions in self-attention
+        tgt_mask = torch.tril(torch.ones(T, T, dtype=torch.bool, device=captions.device))  # (T, T)
+
+        # Step 4: Apply transformer decoder
+        # The decoder uses self-attention (with mask) and cross-attention (with image features)
+        output = self.transformer(tgt, memory, tgt_mask=tgt_mask)  # (N, T, W)
+
+        # Step 5: Project decoder output to vocabulary scores
+        scores = self.output(output)  # (N, T, V)
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -240,7 +259,28 @@ class VisionTransformer(nn.Module):
         #    You may find torch.mean useful.                                      #
         # 5. Feed it through a linear layer to produce class logits.              #
         ############################################################################
+        # Step 1: Convert image into sequence of patch embeddings
+        # Input: (N, C, H, W) -> Output: (N, num_patches, embed_dim)
+        x = self.patch_embed(x)
 
+        # Step 2: Add positional encodings to retain spatial information
+        # This tells the model where each patch came from in the original image
+        # (N, num_patches, embed_dim) -> (N, num_patches, embed_dim)
+        x = self.positional_encoding(x)
+
+        # Step 3: Pass through Transformer encoder layers
+        # Self-attention allows patches to exchange information
+        # (N, num_patches, embed_dim) -> (N, num_patches, embed_dim)
+        x = self.transformer(x)
+
+        # Step 4: Average pool across all patches to get image-level features
+        # (N, num_patches, embed_dim) -> (N, embed_dim)
+        # This aggregates information from all patches into a single vector per image
+        x = torch.mean(x, dim=1)
+
+        # Step 5: Classification head - map to class scores
+        # (N, embed_dim) -> (N, num_classes)
+        logits = self.head(x)
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################

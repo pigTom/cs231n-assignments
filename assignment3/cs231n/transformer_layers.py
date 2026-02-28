@@ -36,7 +36,41 @@ class PositionalEncoding(nn.Module):
         # this is what the autograder is expecting. For reference, our solution is #
         # less than 5 lines of code.                                               #
         ############################################################################
+        # Positional Encoding Formula:
+        # PE(pos, 2i)   = sin(pos / 10000^(2i/d))
+        # PE(pos, 2i+1) = cos(pos / 10000^(2i/d))
+        # where pos is the position, i is the dimension index, d is embed_dim
 
+        # Step 1: Create position indices [0, 1, 2, ..., max_len-1]
+        # Shape: (max_len,) -> (max_len, 1) for broadcasting
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+
+        # Step 2: Compute the division term for each dimension pair
+        # We need to calculate: 1 / 10000^(2i/d) = 10000^(-2i/d)
+        # Using the property: 10000^(-2i/d) = exp(-2i/d * ln(10000))
+        #
+        # torch.arange(0, embed_dim, 2) creates [0, 2, 4, ..., embed_dim-2]
+        #   -> This represents the 2i indices for dimension pairs
+        # -(math.log(10000.0) / embed_dim) is -ln(10000)/d
+        # Multiplying them: [0, 2, 4, ...] * [-ln(10000)/d] = [-2i*ln(10000)/d]
+        # exp(...) converts back: exp(-2i*ln(10000)/d) = 10000^(-2i/d)
+        #
+        # Result shape: (embed_dim/2,) containing [1, 10000^(-2/d), 10000^(-4/d), ...]
+        div_term = torch.exp(torch.arange(0, embed_dim, 2, dtype=torch.float) *
+                            -(math.log(10000.0) / embed_dim))
+
+        # Step 3: Apply sine to even-indexed dimensions (0, 2, 4, ...)
+        # Broadcasting: (max_len, 1) * (embed_dim/2,) -> (max_len, embed_dim/2)
+        # pe[0, :, 0::2] selects all positions, even dimensions in the batch dim 0
+        pe[0, :, 0::2] = torch.sin(position * div_term)
+
+        # Step 4: Apply cosine to odd-indexed dimensions (1, 3, 5, ...)
+        # Uses the same div_term, so each pair (2i, 2i+1) shares the same frequency
+        pe[0, :, 1::2] = torch.cos(position * div_term)
+
+        # Final result: pe[0, pos, dim] contains the positional encoding for
+        # position 'pos' and dimension 'dim', alternating sin/cos with decreasing
+        # frequencies as dimensions increase
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -64,7 +98,24 @@ class PositionalEncoding(nn.Module):
         # appropriate ones to the input sequence. Don't forget to apply dropout    #
         # afterward. This should only take a few lines of code.                    #
         ############################################################################
+        # Add positional encodings to the input sequence
+        #
+        # self.pe contains pre-computed positional encodings for all positions
+        # Shape breakdown:
+        #   - self.pe:     (1, max_len, D) - batch dim of 1 for broadcasting
+        #   - self.pe[:, :S, :]: (1, S, D) - select first S positions
+        #   - x:           (N, S, D) - input embeddings
+        #
+        # Broadcasting operation:
+        #   (1, S, D) + (N, S, D) -> (N, S, D)
+        #   The batch dimension (1) broadcasts across all N examples in the batch
+        #   This means all examples get the SAME positional encodings (as expected)
+        output = x + self.pe[:, :S, :]
 
+        # Apply dropout for regularization
+        # During training: randomly zero out some elements (with probability p)
+        # During inference: this becomes a no-op (dropout is disabled)
+        output = self.dropout(output)
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -138,7 +189,7 @@ class MultiHeadAttention(nn.Module):
           and query.
         """
         N, S, E = query.shape
-        N, T, E = value.shape
+        N, T, D = value.shape
         # Create a placeholder, to be overwritten by your code below.
         output = torch.empty((N, S, E))
         ############################################################################
@@ -155,6 +206,22 @@ class MultiHeadAttention(nn.Module):
         #     prevent a value from influencing output. Specifically, the PyTorch   #
         #     function masked_fill may come in handy.                              #
         ############################################################################
+
+        # Compute key, query and value matrices from sequences
+        K = self.key(key).view(N, T, self.n_head, self.head_dim).transpose(1, 2)
+        Q = self.query(query).view(N, S, self.n_head, self.head_dim).transpose(1, 2)
+        V = self.value(value).view(N, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        # (N,H,S,D/H) @ (N,H,D/H,T) -> (N,H,S,T)
+        scores = Q @ K.transpose(2, 3) / math.sqrt(self.head_dim)
+
+        if attn_mask is not None:
+            scores = scores.masked_fill((attn_mask == 0).unsqueeze(0).unsqueeze(0), float("-inf"))
+
+        # (N,H,S,T) @ (N,H,T,D/H) -> (N,H,S,D/H)
+        scores = self.attn_drop(F.softmax(scores, dim=-1))
+        scores = scores @ V
+        output = self.proj(scores.transpose(1, 2).contiguous().view(N, S, D))
 
         ############################################################################
         #                             END OF YOUR CODE                             #
@@ -252,7 +319,22 @@ class TransformerDecoderLayer(nn.Module):
         # memory, and (2) the feedforward block. Each block should follow the      #
         # same structure as self-attention implemented just above.                 #
         ############################################################################
+        # Cross-attention block
+        # Query comes from decoder (tgt), Key and Value come from encoder (memory)
+        # This allows the decoder to attend to the encoder's output
+        shortcut = tgt
+        tgt = self.cross_attn(query=tgt, key=memory, value=memory)
+        tgt = self.dropout_cross(tgt)
+        tgt = tgt + shortcut
+        tgt = self.norm_cross(tgt)
 
+        # Feedforward block
+        # Position-wise feedforward network applied to each position independently
+        shortcut = tgt
+        tgt = self.ffn(tgt)
+        tgt = self.dropout_ffn(tgt)
+        tgt = tgt + shortcut
+        tgt = self.norm_ffn(tgt)
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -301,7 +383,8 @@ class PatchEmbedding(nn.Module):
         N, C, H, W = x.shape
         assert H == self.img_size and W == self.img_size, \
             f"Expected image size ({self.img_size}, {self.img_size}), but got ({H}, {W})"
-        out = torch.zeros(N, self.embed_dim)
+        # Initialize output placeholder (will be overwritten by implementation)
+        out = torch.zeros(N, self.num_patches, self.embed_dim)
 
         ############################################################################
         # TODO: Divide the image into non-overlapping patches of shape             #
@@ -311,7 +394,31 @@ class PatchEmbedding(nn.Module):
         # step. Once the patches are flattened, embed them into latent vectors     #
         # using the projection layer.                                              #
         ############################################################################
+        # Calculate number of patches along each dimension
+        num_patches_per_dim = self.img_size // self.patch_size
 
+        # Step 1: Reshape image into patches
+        # (N, C, H, W) -> (N, C, num_patches_h, patch_size, num_patches_w, patch_size)
+        # This splits both H and W dimensions into (num_patches, patch_size) chunks
+        x = x.reshape(N, C, num_patches_per_dim, self.patch_size,
+                     num_patches_per_dim, self.patch_size)
+
+        # Step 2: Rearrange dimensions to group patches together
+        # (N, C, num_patches_h, patch_size, num_patches_w, patch_size)
+        # -> (N, num_patches_h, num_patches_w, C, patch_size, patch_size)
+        # This moves spatial patch indices together and channel/patch dimensions together
+        x = x.permute(0, 2, 4, 1, 3, 5)
+
+        # Step 3: Flatten each patch
+        # (N, num_patches_h, num_patches_w, C, patch_size, patch_size)
+        # -> (N, num_patches, patch_dim)
+        # where num_patches = num_patches_h * num_patches_w
+        # and patch_dim = C * patch_size * patch_size
+        x = x.reshape(N, self.num_patches, self.patch_dim)
+
+        # Step 4: Project flattened patches to embedding dimension
+        # (N, num_patches, patch_dim) -> (N, num_patches, embed_dim)
+        out = self.proj(x)
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -359,7 +466,22 @@ class TransformerEncoderLayer(nn.Module):
         # TODO: Implement the encoder layer by applying self-attention followed    #
         # by a feedforward block. This code will be very similar to decoder layer. #
         ############################################################################
+        # Self-attention block
+        # Query, Key, Value all come from the same source (src)
+        # This allows each position to attend to all positions in the input
+        shortcut = src
+        src = self.self_attn(query=src, key=src, value=src, attn_mask=src_mask)
+        src = self.dropout_self(src)
+        src = src + shortcut
+        src = self.norm_self(src)
 
+        # Feedforward block
+        # Position-wise feedforward network applied to each position independently
+        shortcut = src
+        src = self.ffn(src)
+        src = self.dropout_ffn(src)
+        src = src + shortcut
+        src = self.norm_ffn(src)
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
